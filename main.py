@@ -104,13 +104,12 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Turnover: {data['Turnover']}\n"
             f"Down From High: {data['Down From High']}%\n"
             f"Up From Low: {data['Up From Low']}%\n\n"
-            f"Thank you for using my bot.\nPlease share with your friends and group."
+            "Thank you for using my bot. Please share it with your friends and groups."
         )
     else:
-        response = f"""Symbol '{symbol}'\n
-        ल्या, फेला परेन त हौं।🤗🤗
-        Symbol मिलेन कि कारोबार बन्द छ?
-        फेरि कोसिस गर्नुस त।"""
+        response = f"""Symbol '{symbol}' not found, please try again later. 🧐
+        Symbol not recognized? Please check the spelling or use a valid stock symbol."""
+
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
 # Main function to set up the bot and run polling
