@@ -32,14 +32,27 @@ def fetch_stock_data_by_symbol(symbol):
         row_symbol = cols[1].text.strip()
 
         if row_symbol.upper() == symbol.upper():
-            day_high = cols[4].text.strip()
-            day_low = cols[5].text.strip()
-            closing_price = cols[6].text.strip()
-            change_percent = cols[14].text.strip()
-            volume = cols[8].text.strip()
-            turnover = cols[10].text.strip()
-            week_52_high = cols[19].text.strip()
-            week_52_low = cols[20].text.strip()
+            try:
+                day_high = float(cols[4].text.strip().replace(',', ''))
+                day_low = float(cols[5].text.strip().replace(',', ''))
+                closing_price = float(cols[6].text.strip().replace(',', ''))
+                change_percent = cols[14].text.strip()
+                volume = cols[8].text.strip()
+                turnover = cols[10].text.strip()
+                week_52_high = float(cols[19].text.strip().replace(',', ''))
+                week_52_low = float(cols[20].text.strip().replace(',', ''))
+
+                # Calculate Down From High and Up From Low
+                down_from_high = round(((week_52_high - closing_price) / week_52_high) * 100, 2)
+                up_from_low = round(((closing_price - week_52_low) / week_52_low) * 100, 2)
+
+            except (ValueError, IndexError) as e:
+                # Handle missing or invalid data
+                print(f"Data processing error for symbol {symbol}: {e}")
+                week_52_high = "NA"
+                week_52_low = "NA"
+                down_from_high = "NA"
+                up_from_low = "NA"
 
             # Handle color for change percentage
             if "-" in change_percent:
@@ -58,14 +71,16 @@ def fetch_stock_data_by_symbol(symbol):
                 'Volume': volume,
                 'Turnover': turnover,
                 '52 Week High': week_52_high,
-                '52 Week Low': week_52_low
+                '52 Week Low': week_52_low,
+                'Down From High': down_from_high,
+                'Up From Low': up_from_low
             }
     return None
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
-        "Welcome to Syntu's NEPSE BOT\n"
+        "Welcome to Syntoo's NEPSE BOT\n"
         "कृपया स्टकको सिम्बोल दिनुहोस्।\n"
         "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
@@ -86,13 +101,15 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"52 Week High: {data['52 Week High']}\n"
             f"52 Week Low: {data['52 Week Low']}\n"
             f"Volume: {data['Volume']}\n"
-            f"Turnover: {data['Turnover']}"
+            f"Turnover: {data['Turnover']}\n"
+            f"Down From High: {data['Down From High']}%\n"
+            f"Up From Low: {data['Up From Low']}%"
         )
     else:
         response = f"""Symbol '{symbol}'
-        लौ जा, फेला परेन त 🤗🤗।
-        कि Symbol को Spelling मिलेन ?
-        अझै Try गर्नुस।"""
+        ल्या, फेला परेन त हौं।🤗🤗
+        Symbol मिलेन कि कारोबार बन्द छ?
+        फेरि कोसिस गर्नुस त।"""
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
 # Main function to set up the bot and run polling
@@ -108,4 +125,4 @@ if __name__ == "__main__":
 
     # Start polling
     print("Starting polling...")
-    application.run_polling()  # Ensure your app is running here and will continue to listen for messages
+    application.run_polling()
