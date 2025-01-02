@@ -103,11 +103,11 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Volume: {data['Volume']}\n"
             f"Turnover: {data['Turnover']}\n"
             f"Down From High: {data['Down From High']}%\n"
-            f"Up From Low: {data['Up From Low (%)']}%\n\n"
+            f"Up From Low: {data['Up From Low']}%\n\n"
             f"Thank you for using my bot.\nPlease share with your friends and group."
         )
     else:
-        response = f"""Symbol '{symbol}'
+        response = f"""Symbol '{symbol}'\n
         ल्या, फेला परेन त हौं।🤗🤗
         Symbol मिलेन कि कारोबार बन्द छ?
         फेरि कोसिस गर्नुस त।"""
