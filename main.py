@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
@@ -7,11 +8,38 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
 # Initialize Flask application
 app = Flask(__name__)
+
+# Create or connect to the database
+def create_db():
+    conn = sqlite3.connect('users.db')  # Database file
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY, 
+                        username TEXT)''')
+    conn.commit()
+    conn.close()
+
+# Add user to database
+def add_user(user_id, username):
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO users (id, username) VALUES (?, ?)", (user_id, username))
+    conn.commit()
+    conn.close()
+
+# Get total users
+def get_total_users():
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    conn.close()
+    return total_users
 
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
@@ -111,12 +139,22 @@ def fetch_stock_data(symbol):
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Add user to database
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username
+    add_user(user_id, username)
+
     welcome_message = (
-        "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
-        "के को डाटा चाहियो? Symbol दिनुस।\n"
-        "उदाहरण: SHINE, SCB, SWBBL, SHPC"
+        "Welcome ðŸ™ to Syntoo's NEPSE BOTðŸ’—\n"
+        "à¤•à¥‡ à¤•à¥‹ à¤¡à¤¾à¤Ÿà¤¾ à¤šà¤¾à¤¹à¤¿à¤¯à¥‹? Symbol à¤¦à¤¿à¤¨à¥à¤¸à¥¤\n"
+        "à¤‰à¤¦à¤¾à¤¹à¤°à¤£: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
+
+    # Send message about total users to you
+    total_users = get_total_users()
+    chat_id = os.getenv("CHAT_ID")
+    await context.bot.send_message(chat_id=chat_id, text=f"Total users using the bot: {total_users}")
 
 # Default handler for stock symbol
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,15 +172,15 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"52 Week High: {data['52 Week High']}\n"
             f"52 Week Low: {data['52 Week Low']}\n"
             f"Volume: {data['Volume']}\n"
-            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
-            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
+            f"à¥«à¥¨ à¤¹à¤ªà¥à¤¤à¤¾à¤•à¥‹ à¤‰à¤šà¥à¤š à¤®à¥à¤²à¥à¤¯à¤¬à¤¾à¤Ÿ à¤˜à¤Ÿà¥‡à¤•à¥‹: {data['Down From High']}%\n"
+            f"à¥«à¥¨ à¤¹à¤ªà¥à¤¤à¤¾à¤•à¥‹ à¤¨à¥à¤¯à¥à¤¨ à¤®à¥à¤²à¥à¤¯à¤¬à¤¾à¤Ÿ à¤¬à¤¢à¥‡à¤•à¥‹: {data['Up From Low']}%\n\n"
             "Thank you for using my bot. Please share it with your friends and groups."
         )
     else:
         response = f"""Symbol '{symbol}' 
-        ल्या, फेला परेन त 🤗🤗।
-        Symbol राम्रो सङ्ग फेरि हान्नुस है।
-        कि कारोबार भएको छैन? 🤗। """
+        à¤²à¥à¤¯à¤¾, à¤«à¥‡à¤²à¤¾ à¤ªà¤°à¥‡à¤¨ à¤¤ ðŸ¤—ðŸ¤—à¥¤
+        Symbol à¤°à¤¾à¤®à¥à¤°à¥‹ à¤¸à¤™à¥à¤— à¤«à¥‡à¤°à¤¿ à¤¹à¤¾à¤¨à¥à¤¨à¥à¤¸ à¤¹à¥ˆà¥¤
+        à¤•à¤¿ à¤•à¤¾à¤°à¥‹à¤¬à¤¾à¤° à¤­à¤à¤•à¥‹ à¤›à¥ˆà¤¨? ðŸ¤—à¥¤ """
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
