@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
@@ -8,38 +7,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Initialize Flask application
 app = Flask(__name__)
-
-# Create or connect to the database
-def create_db():
-    conn = sqlite3.connect('users.db')  # Database file
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY, 
-                        username TEXT)''')
-    conn.commit()
-    conn.close()
-
-# Add user to database
-def add_user(user_id, username):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (id, username) VALUES (?, ?)", (user_id, username))
-    conn.commit()
-    conn.close()
-
-# Get total users
-def get_total_users():
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total_users = cursor.fetchone()[0]
-    conn.close()
-    return total_users
 
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
@@ -139,22 +111,12 @@ def fetch_stock_data(symbol):
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Add user to database
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    add_user(user_id, username)
-
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
         "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
-
-    # Send message about total users to you
-    total_users = get_total_users()
-    chat_id = os.getenv("CHAT_ID")
-    await context.bot.send_message(chat_id=chat_id, text=f"Total users using the bot: {total_users}")
 
 # Default handler for stock symbol
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
