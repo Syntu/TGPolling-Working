@@ -145,9 +145,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(user_id, username)
 
     welcome_message = (
-        "Welcome ðŸ™ to Syntoo's NEPSE BOTðŸ’—\n"
-        "à¤•à¥‡ à¤•à¥‹ à¤¡à¤¾à¤Ÿà¤¾ à¤šà¤¾à¤¹à¤¿à¤¯à¥‹? Symbol à¤¦à¤¿à¤¨à¥à¤¸à¥¤\n"
-        "à¤‰à¤¦à¤¾à¤¹à¤°à¤£: SHINE, SCB, SWBBL, SHPC"
+        "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
+        "के को डाटा चाहियो? Symbol दिनुस।\n"
+        "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
 
@@ -172,20 +172,21 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"52 Week High: {data['52 Week High']}\n"
             f"52 Week Low: {data['52 Week Low']}\n"
             f"Volume: {data['Volume']}\n"
-            f"à¥«à¥¨ à¤¹à¤ªà¥à¤¤à¤¾à¤•à¥‹ à¤‰à¤šà¥à¤š à¤®à¥à¤²à¥à¤¯à¤¬à¤¾à¤Ÿ à¤˜à¤Ÿà¥‡à¤•à¥‹: {data['Down From High']}%\n"
-            f"à¥«à¥¨ à¤¹à¤ªà¥à¤¤à¤¾à¤•à¥‹ à¤¨à¥à¤¯à¥à¤¨ à¤®à¥à¤²à¥à¤¯à¤¬à¤¾à¤Ÿ à¤¬à¤¢à¥‡à¤•à¥‹: {data['Up From Low']}%\n\n"
+            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
+            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
             "Thank you for using my bot. Please share it with your friends and groups."
         )
     else:
         response = f"""Symbol '{symbol}' 
-        à¤²à¥à¤¯à¤¾, à¤«à¥‡à¤²à¤¾ à¤ªà¤°à¥‡à¤¨ à¤¤ ðŸ¤—ðŸ¤—à¥¤
-        Symbol à¤°à¤¾à¤®à¥à¤°à¥‹ à¤¸à¤™à¥à¤— à¤«à¥‡à¤°à¤¿ à¤¹à¤¾à¤¨à¥à¤¨à¥à¤¸ à¤¹à¥ˆà¥¤
-        à¤•à¤¿ à¤•à¤¾à¤°à¥‹à¤¬à¤¾à¤° à¤­à¤à¤•à¥‹ à¤›à¥ˆà¤¨? ðŸ¤—à¥¤ """
+        ल्या, फेला परेन त 🤗🤗।
+        Symbol राम्रो सङ्ग फेरि हान्नुस है।
+        कि कारोबार भएको छैन? 🤗। """
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
 # Main function
 if __name__ == "__main__":
+    create_db()  # Initialize database
     TOKEN = os.getenv("TELEGRAM_API_KEY")
 
     # Set up Telegram bot application
