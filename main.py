@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
@@ -8,38 +7,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Initialize Flask application
 app = Flask(__name__)
-
-# Create or connect to the database
-def create_db():
-    conn = sqlite3.connect('users.db')  # Database file
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY, 
-                        username TEXT)''')
-    conn.commit()
-    conn.close()
-
-# Add user to database
-def add_user(user_id, username):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (id, username) VALUES (?, ?)", (user_id, username))
-    conn.commit()
-    conn.close()
-
-# Get total users
-def get_total_users():
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total_users = cursor.fetchone()[0]
-    conn.close()
-    return total_users
 
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
@@ -115,13 +87,18 @@ def fetch_52_week_data(symbol):
                 return None
     return None
 
-# Function to fetch complete stock data
+# Function to fetch stock data with fallback to 52-week data
 def fetch_stock_data(symbol):
     live_data = fetch_live_trading_data(symbol)
+
+    if live_data:
+        return live_data
+
+    print(f"Symbol '{symbol}' not found in live trading data. Falling back to 52-week data...")
     week_data = fetch_52_week_data(symbol)
 
-    if live_data and week_data:
-        ltp = live_data['LTP']
+    if week_data:
+        ltp = week_data['52 Week High']  # Assuming LTP from 52-week data if not in live trading
         week_52_high = week_data['52 Week High']
         week_52_low = week_data['52 Week Low']
 
@@ -129,32 +106,24 @@ def fetch_stock_data(symbol):
         down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
         up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
 
-        live_data.update(week_data)
-        live_data.update({
+        week_data.update({
+            'LTP': ltp,
             'Down From High': down_from_high,
             'Up From Low': up_from_low
         })
-        return live_data
+        return week_data
+
+    print(f"Symbol '{symbol}' not found in both data sources.")
     return None
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Add user to database
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username
-    add_user(user_id, username)
-
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
         "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
-
-    # Send message about total users to you
-    total_users = get_total_users()
-    chat_id = os.getenv("CHAT_ID")
-    await context.bot.send_message(chat_id=chat_id, text=f"Total users using the bot: {total_users}")
 
 # Default handler for stock symbol
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,7 +155,6 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Main function
 if __name__ == "__main__":
-    create_db()  # Initialize database
     TOKEN = os.getenv("TELEGRAM_API_KEY")
 
     # Set up Telegram bot application
