@@ -85,25 +85,34 @@ def fetch_52_week_data(symbol):
 
 # Function to fetch complete stock data
 def fetch_stock_data(symbol):
+    # Step 1: Check in live trading data
     live_data = fetch_live_trading_data(symbol)
-    week_data = fetch_52_week_data(symbol)
+    
+    # Step 2: If not found, check in 52-week data
+    if not live_data:
+        week_data = fetch_52_week_data(symbol)
+        if not week_data:
+            return None  # Return None if not found in either table
+        else:
+            return week_data  # Return 52-week data if found
+    else:
+        # If live trading data is found, enrich it with 52-week data
+        week_data = fetch_52_week_data(symbol)
+        if week_data:
+            ltp = live_data['LTP']
+            week_52_high = week_data['52 Week High']
+            week_52_low = week_data['52 Week Low']
 
-    if live_data and week_data:
-        ltp = live_data['LTP']
-        week_52_high = week_data['52 Week High']
-        week_52_low = week_data['52 Week Low']
+            # Calculate down from high and up from low
+            down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
+            up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
 
-        # Calculate down from high and up from low
-        down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
-        up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
-
-        live_data.update(week_data)
-        live_data.update({
-            'Down From High': down_from_high,
-            'Up From Low': up_from_low
-        })
+            live_data.update(week_data)
+            live_data.update({
+                'Down From High': down_from_high,
+                'Up From Low': up_from_low
+            })
         return live_data
-    return None
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,23 +131,24 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data:
         response = (
             f"Stock Data for <b>{symbol}</b>:\n\n"
-            f"LTP: {data['LTP']}\n"
-            f"Change Percent: {data['Change Percent']}\n"
-            f"Previous Close: {data['Previous Close']}\n"
-            f"Day High: {data['Day High']}\n"
-            f"Day Low: {data['Day Low']}\n"
-            f"52 Week High: {data['52 Week High']}\n"
-            f"52 Week Low: {data['52 Week Low']}\n"
-            f"Volume: {data['Volume']}\n"
-            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
-            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
+            f"LTP: {data.get('LTP', 'N/A')}\n"
+            f"Change Percent: {data.get('Change Percent', 'N/A')}\n"
+            f"Previous Close: {data.get('Previous Close', 'N/A')}\n"
+            f"Day High: {data.get('Day High', 'N/A')}\n"
+            f"Day Low: {data.get('Day Low', 'N/A')}\n"
+            f"52 Week High: {data.get('52 Week High', 'N/A')}\n"
+            f"52 Week Low: {data.get('52 Week Low', 'N/A')}\n"
+            f"Volume: {data.get('Volume', 'N/A')}\n"
+            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data.get('Down From High', 'N/A')}%\n"
+            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data.get('Up From Low', 'N/A')}%\n\n"
             "Thank you for using my bot. Please share it with your friends and groups."
         )
     else:
-        response = f"""Symbol '{symbol}' 
-        ल्या, फेला परेन त 🤗🤗।
-        Symbol राम्रो सङ्ग फेरि हान्नुस है।
-        कि कारोबार भएको छैन? 🤗। """
+        response = (
+            f"Symbol '{symbol}' ल्या, फेला परेन त 🤗🤗।\n"
+            "Symbol राम्रो सङ्ग फेरि हान्नुस है।\n"
+            "कि कारोबार भएको छैन? 🤗।"
+        )
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
