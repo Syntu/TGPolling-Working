@@ -1,7 +1,6 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
@@ -10,12 +9,9 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Initialize Flask application
-app = Flask(__name__)
-
-# Function to fetch live trading data
+# Function to search and fetch live trading data
 def fetch_live_trading_data(symbol):
-    url = "https://www.sharesansar.com/live-trading"
+    url = f"https://www.sharesansar.com/live-trading?search={symbol}"
     response = requests.get(url)
 
     if response.status_code != 200:
@@ -54,9 +50,9 @@ def fetch_live_trading_data(symbol):
                 return None
     return None
 
-# Function to fetch 52-week data
+# Function to search and fetch 52-week data
 def fetch_52_week_data(symbol):
-    url = "https://www.sharesansar.com/today-share-price"
+    url = f"https://www.sharesansar.com/today-share-price?search={symbol}"
     response = requests.get(url)
 
     if response.status_code != 200:
@@ -87,18 +83,13 @@ def fetch_52_week_data(symbol):
                 return None
     return None
 
-# Function to fetch stock data with fallback to 52-week data
+# Function to fetch complete stock data
 def fetch_stock_data(symbol):
     live_data = fetch_live_trading_data(symbol)
-
-    if live_data:
-        return live_data
-
-    print(f"Symbol '{symbol}' not found in live trading data. Falling back to 52-week data...")
     week_data = fetch_52_week_data(symbol)
 
-    if week_data:
-        ltp = week_data['52 Week High']  # Assuming LTP from 52-week data if not in live trading
+    if live_data and week_data:
+        ltp = live_data['LTP']
         week_52_high = week_data['52 Week High']
         week_52_low = week_data['52 Week Low']
 
@@ -106,14 +97,12 @@ def fetch_stock_data(symbol):
         down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
         up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
 
-        week_data.update({
-            'LTP': ltp,
+        live_data.update(week_data)
+        live_data.update({
             'Down From High': down_from_high,
             'Up From Low': up_from_low
         })
-        return week_data
-
-    print(f"Symbol '{symbol}' not found in both data sources.")
+        return live_data
     return None
 
 # Start command handler
@@ -167,7 +156,3 @@ if __name__ == "__main__":
     # Start polling
     print("Starting polling...")
     application.run_polling()
-
-    # Running Flask app to handle web traffic
-    port = int(os.getenv("PORT", 8080))  # Render's default port
-    app.run(host="0.0.0.0", port=port)
