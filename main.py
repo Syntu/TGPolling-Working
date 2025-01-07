@@ -1,20 +1,18 @@
 import os
 import json
-import requests
-from bs4 import BeautifulSoup
-from flask import Flask, jsonify
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
-from dotenv import load_dotenv
+import asyncio
 import smtplib
+import schedule
+import time
+from threading import Thread
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-import schedule
-import time
-from threading import Thread
+from flask import Flask, jsonify
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -28,46 +26,44 @@ if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w") as file:
         json.dump([], file)
 
-# Bot owner chat ID (set in .env file)
+# Environment variables
 BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
 
-# Email configuration
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")  # Your email address
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Your email password (or app-specific password)
 
 # Function to log unique users
 def log_user(chat_id, username):
     with open(DATA_FILE, "r") as file:
         users = json.load(file)
 
-    # Notify owner for new user
     if chat_id not in [user["chat_id"] for user in users]:
         users.append({"chat_id": chat_id, "username": username})
         with open(DATA_FILE, "w") as file:
             json.dump(users, file)
-        # Notify bot owner about new user
+        # Notify bot owner about the new user
         asyncio.run(notify_owner(chat_id, username))
 
-# Async function to notify bot owner of new user
+
+# Notify the bot owner about a new user
 async def notify_owner(chat_id, username):
-    application = ApplicationBuilder().token(os.getenv("TELEGRAM_API_KEY")).build()
     await application.bot.send_message(
         chat_id=BOT_OWNER_CHAT_ID,
         text=f"New user detected:\nChat ID: {chat_id}\nUsername: {username}"
     )
 
-# Send users.json via email
+
+# Send email with users.json
 def send_email():
     if not os.path.exists(DATA_FILE):
         print("No users.json file found.")
         return
 
-    # Read users and format in tabular form
     with open(DATA_FILE, "r") as file:
         users = json.load(file)
     formatted_users = "\n".join([f"{user['chat_id']}: {user['username']}" for user in users])
 
-    # Create email message
     subject = "NEPSE Bot: Weekly Users Report"
     body = f"Attached is the weekly report of users who have used your bot.\n\nUser List:\n{formatted_users}"
 
@@ -78,7 +74,6 @@ def send_email():
 
     msg.attach(MIMEText(body, 'plain'))
 
-    # Attach users.json file
     with open(DATA_FILE, "rb") as file:
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(file.read())
@@ -89,7 +84,6 @@ def send_email():
     )
     msg.attach(part)
 
-    # Send email
     try:
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
@@ -99,7 +93,8 @@ def send_email():
     except Exception as e:
         print(f"Failed to send email: {e}")
 
-# Schedule the email job
+
+# Schedule email job
 def schedule_email():
     schedule.every().thursday.at("16:00").do(send_email)
 
@@ -107,7 +102,8 @@ def schedule_email():
         schedule.run_pending()
         time.sleep(1)
 
-# API Endpoint to view users.json
+
+# Flask API endpoint to view users.json
 @app.route("/users", methods=["GET"])
 def get_users():
     if os.path.exists(DATA_FILE):
@@ -115,6 +111,7 @@ def get_users():
             users = json.load(file)
         return jsonify({"users": users, "total_users": len(users)}), 200
     return jsonify({"error": "users.json not found!"}), 404
+
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,14 +126,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_message)
 
+
 # Main function
 if __name__ == "__main__":
-    TOKEN = os.getenv("TELEGRAM_API_KEY")
+    # Telegram bot application
+    application = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
 
-    # Set up Telegram bot application
-    application = ApplicationBuilder().token(TOKEN).build()
-
-    # Add handlers to the application
+    # Add command handler
     application.add_handler(CommandHandler("start", start))
 
     # Start email scheduling in a separate thread
@@ -144,10 +140,6 @@ if __name__ == "__main__":
     email_thread.daemon = True
     email_thread.start()
 
-    # Start polling
+    # Start Telegram bot polling
     print("Starting polling...")
     application.run_polling()
-
-    # Running Flask app to handle web traffic
-    port = int(os.getenv("PORT", 8080))  # Render's default port
-    app.run(host="0.0.0.0", port=port)
