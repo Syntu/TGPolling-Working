@@ -28,11 +28,11 @@ if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w") as file:
         json.dump([], file)
 
-# Bot owner chat ID (replace with your actual chat ID)
-BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")  # Set in .env file
+# Bot owner chat ID (set in .env file)
+BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")
 
 # Email configuration
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")  # Your email (e.g., syntusantosh@gmail.com)
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")  # Your email address
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Your email password (or app-specific password)
 
 # Function to log unique users
@@ -45,12 +45,13 @@ def log_user(chat_id, username):
         users.append({"chat_id": chat_id, "username": username})
         with open(DATA_FILE, "w") as file:
             json.dump(users, file)
-        notify_owner(chat_id, username)
+        # Notify bot owner about new user
+        asyncio.run(notify_owner(chat_id, username))
 
-# Notify bot owner of new user
-def notify_owner(chat_id, username):
+# Async function to notify bot owner of new user
+async def notify_owner(chat_id, username):
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_API_KEY")).build()
-    application.bot.send_message(
+    await application.bot.send_message(
         chat_id=BOT_OWNER_CHAT_ID,
         text=f"New user detected:\nChat ID: {chat_id}\nUsername: {username}"
     )
