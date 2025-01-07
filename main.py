@@ -2,11 +2,19 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask
+from flask import Flask, jsonify
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+import schedule
+import time
+from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -20,113 +28,98 @@ if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w") as file:
         json.dump([], file)
 
+# Bot owner chat ID (replace with your actual chat ID)
+BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")  # Set in .env file
+
+# Email configuration
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")  # Your email (e.g., syntusantosh@gmail.com)
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Your email password (or app-specific password)
+
 # Function to log unique users
-def log_user(chat_id):
+def log_user(chat_id, username):
     with open(DATA_FILE, "r") as file:
         users = json.load(file)
-    if chat_id not in users:
-        users.append(chat_id)
+
+    # Notify owner for new user
+    if chat_id not in [user["chat_id"] for user in users]:
+        users.append({"chat_id": chat_id, "username": username})
         with open(DATA_FILE, "w") as file:
             json.dump(users, file)
+        notify_owner(chat_id, username)
 
-# Function to fetch live trading data
-def fetch_live_trading_data(symbol):
-    url = "https://www.sharesansar.com/live-trading"
-    response = requests.get(url)
-    if response.status_code != 200:
-        print("Error: Unable to fetch live trading data. Status code:", response.status_code)
-        return None
+# Notify bot owner of new user
+def notify_owner(chat_id, username):
+    application = ApplicationBuilder().token(os.getenv("TELEGRAM_API_KEY")).build()
+    application.bot.send_message(
+        chat_id=BOT_OWNER_CHAT_ID,
+        text=f"New user detected:\nChat ID: {chat_id}\nUsername: {username}"
+    )
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    if not table:
-        print("Error: No table found in live trading data.")
-        return None
+# Send users.json via email
+def send_email():
+    if not os.path.exists(DATA_FILE):
+        print("No users.json file found.")
+        return
 
-    rows = table.find_all('tr')[1:]
-    for row in rows:
-        cols = row.find_all('td')
-        row_symbol = cols[1].text.strip()
+    # Read users and format in tabular form
+    with open(DATA_FILE, "r") as file:
+        users = json.load(file)
+    formatted_users = "\n".join([f"{user['chat_id']}: {user['username']}" for user in users])
 
-        if row_symbol.upper() == symbol.upper():
-            try:
-                ltp = float(cols[2].text.strip().replace(',', ''))
-                change_percent = cols[4].text.strip()
-                day_high = float(cols[6].text.strip().replace(',', ''))
-                day_low = float(cols[7].text.strip().replace(',', ''))
-                volume = cols[8].text.strip()
-                previous_close = float(cols[9].text.strip().replace(',', ''))
-                return {
-                    'LTP': ltp,
-                    'Change Percent': change_percent,
-                    'Day High': day_high,
-                    'Day Low': day_low,
-                    'Volume': volume,
-                    'Previous Close': previous_close
-                }
-            except (ValueError, IndexError) as e:
-                print(f"Error processing live trading data for symbol {symbol}: {e}")
-                return None
-    return None
+    # Create email message
+    subject = "NEPSE Bot: Weekly Users Report"
+    body = f"Attached is the weekly report of users who have used your bot.\n\nUser List:\n{formatted_users}"
 
-# Function to fetch 52-week data
-def fetch_52_week_data(symbol):
-    url = "https://www.sharesansar.com/today-share-price"
-    response = requests.get(url)
-    if response.status_code != 200:
-        print("Error: Unable to fetch 52-week data. Status code:", response.status_code)
-        return None
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = EMAIL_ADDRESS
+    msg['Subject'] = subject
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    if not table:
-        print("Error: No table found in 52-week data.")
-        return None
+    msg.attach(MIMEText(body, 'plain'))
 
-    rows = table.find_all('tr')[1:]
-    for row in rows:
-        cols = row.find_all('td')
-        row_symbol = cols[1].text.strip()
+    # Attach users.json file
+    with open(DATA_FILE, "rb") as file:
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(file.read())
+    encoders.encode_base64(part)
+    part.add_header(
+        'Content-Disposition',
+        f'attachment; filename={DATA_FILE}'
+    )
+    msg.attach(part)
 
-        if row_symbol.upper() == symbol.upper():
-            try:
-                week_52_high = float(cols[19].text.strip().replace(',', ''))
-                week_52_low = float(cols[20].text.strip().replace(',', ''))
-                return {
-                    '52 Week High': week_52_high,
-                    '52 Week Low': week_52_low
-                }
-            except (ValueError, IndexError) as e:
-                print(f"Error processing 52-week data for symbol {symbol}: {e}")
-                return None
-    return None
+    # Send email
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_ADDRESS, EMAIL_ADDRESS, msg.as_string())
+        print("Email sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
 
-# Function to fetch complete stock data
-def fetch_stock_data(symbol):
-    live_data = fetch_live_trading_data(symbol)
-    week_data = fetch_52_week_data(symbol)
+# Schedule the email job
+def schedule_email():
+    schedule.every().thursday.at("16:00").do(send_email)
 
-    if live_data and week_data:
-        ltp = live_data['LTP']
-        week_52_high = week_data['52 Week High']
-        week_52_low = week_data['52 Week Low']
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
-        # Calculate down from high and up from low
-        down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
-        up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
-
-        live_data.update(week_data)
-        live_data.update({
-            'Down From High': down_from_high,
-            'Up From Low': up_from_low
-        })
-        return live_data
-    return None
+# API Endpoint to view users.json
+@app.route("/users", methods=["GET"])
+def get_users():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as file:
+            users = json.load(file)
+        return jsonify({"users": users, "total_users": len(users)}), 200
+    return jsonify({"error": "users.json not found!"}), 404
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    log_user(chat_id)
+    username = update.effective_user.username or "Unknown"
+    log_user(chat_id, username)
 
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
@@ -134,43 +127,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
-
-# Default handler for stock symbol
-async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    log_user(chat_id)
-
-    symbol = update.message.text.strip().upper()
-    data = fetch_stock_data(symbol)
-
-    if data:
-        response = (
-            f"Stock Data for <b>{symbol}</b>:\n\n"
-            f"LTP: {data['LTP']}\n"
-            f"Change Percent: {data['Change Percent']}\n"
-            f"Previous Close: {data['Previous Close']}\n"
-            f"Day High: {data['Day High']}\n"
-            f"Day Low: {data['Day Low']}\n"
-            f"52 Week High: {data['52 Week High']}\n"
-            f"52 Week Low: {data['52 Week Low']}\n"
-            f"Volume: {data['Volume']}\n"
-            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
-            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
-            "Thank you for using my bot. Please share it with your friends and groups."
-        )
-    else:
-        response = f"""Symbol '{symbol}' 
-        ल्या, फेला परेन त 🤗🤗।
-        Symbol राम्रो सङ्ग फेरि हान्नुस है।
-        कि कारोबार भएको छैन? 🤗। """
-
-    await update.message.reply_text(response, parse_mode=ParseMode.HTML)
-
-# Total users command handler
-async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with open(DATA_FILE, "r") as file:
-        users = json.load(file)
-    await update.message.reply_text(f"Total unique users: {len(users)}")
 
 # Main function
 if __name__ == "__main__":
@@ -181,8 +137,11 @@ if __name__ == "__main__":
 
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("total_users", total_users))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
+
+    # Start email scheduling in a separate thread
+    email_thread = Thread(target=schedule_email)
+    email_thread.daemon = True
+    email_thread.start()
 
     # Start polling
     print("Starting polling...")
