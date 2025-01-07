@@ -1,11 +1,7 @@
 import os
-import time
+import json
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -18,59 +14,33 @@ load_dotenv()
 # Initialize Flask application
 app = Flask(__name__)
 
-# Function to fetch NEPSE Alpha data
-def fetch_nepse_alpha_data():
-    url = "https://nepsealpha.com/live-market"
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    service = Service('path/to/chromedriver')  # Replace with your chromedriver path
-    driver = webdriver.Chrome(service=service, options=options)
+# Ensure users.json exists
+DATA_FILE = "users.json"
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w") as file:
+        json.dump([], file)
 
-    try:
-        driver.get(url)
-        time.sleep(5)  # Wait for the page to load
-
-        # Extract required data
-        data = {}
-        data['Date'] = driver.find_element(By.XPATH, '//span[@id="marketDate"]').text
-        data['Current'] = driver.find_element(By.XPATH, '//span[@id="marketCurrent"]').text
-        data['Daily Gain'] = driver.find_element(By.XPATH, '//span[@id="dailyGain"]').text
-        data['Turnover'] = driver.find_element(By.XPATH, '//span[@id="marketTurnover"]').text
-        data['Previous Close'] = driver.find_element(By.XPATH, '//span[@id="previousClose"]').text
-        data['Positive Stock'] = driver.find_element(By.XPATH, '//span[@id="positiveStock"]').text
-        data['Neutral Stock'] = driver.find_element(By.XPATH, '//span[@id="neutralStock"]').text
-        data['Negative Stock'] = driver.find_element(By.XPATH, '//span[@id="negativeStock"]').text
-
-        response = (
-            f"📊 **NEPSE Live Market Data**\n\n"
-            f"🗓 Date: {data['Date']}\n"
-            f"📈 Current: {data['Current']}\n"
-            f"📉 Daily Gain: {data['Daily Gain']}\n"
-            f"💰 Turnover: {data['Turnover']}\n"
-            f"🔙 Previous Close: {data['Previous Close']}\n"
-            f"✅ Positive Stocks: {data['Positive Stock']}\n"
-            f"⚖ Neutral Stocks: {data['Neutral Stock']}\n"
-            f"❌ Negative Stocks: {data['Negative Stock']}\n"
-        )
-        return response
-    except Exception as e:
-        return f"⚠️ Error fetching NEPSE Alpha data: {e}"
-    finally:
-        driver.quit()
+# Function to log unique users
+def log_user(chat_id):
+    with open(DATA_FILE, "r") as file:
+        users = json.load(file)
+    if chat_id not in users:
+        users.append(chat_id)
+        with open(DATA_FILE, "w") as file:
+            json.dump(users, file)
 
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
     url = "https://www.sharesansar.com/live-trading"
     response = requests.get(url)
-
     if response.status_code != 200:
+        print("Error: Unable to fetch live trading data. Status code:", response.status_code)
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
     table = soup.find('table')
     if not table:
+        print("Error: No table found in live trading data.")
         return None
 
     rows = table.find_all('tr')[1:]
@@ -94,7 +64,8 @@ def fetch_live_trading_data(symbol):
                     'Volume': volume,
                     'Previous Close': previous_close
                 }
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
+                print(f"Error processing live trading data for symbol {symbol}: {e}")
                 return None
     return None
 
@@ -102,13 +73,14 @@ def fetch_live_trading_data(symbol):
 def fetch_52_week_data(symbol):
     url = "https://www.sharesansar.com/today-share-price"
     response = requests.get(url)
-
     if response.status_code != 200:
+        print("Error: Unable to fetch 52-week data. Status code:", response.status_code)
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
     table = soup.find('table')
     if not table:
+        print("Error: No table found in 52-week data.")
         return None
 
     rows = table.find_all('tr')[1:]
@@ -124,7 +96,8 @@ def fetch_52_week_data(symbol):
                     '52 Week High': week_52_high,
                     '52 Week Low': week_52_low
                 }
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
+                print(f"Error processing 52-week data for symbol {symbol}: {e}")
                 return None
     return None
 
@@ -152,41 +125,52 @@ def fetch_stock_data(symbol):
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    log_user(chat_id)
+
     welcome_message = (
-        "Welcome 🙏 to NEPSE BOT\n"
+        "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
-        "NEPSE टाइप गरेमा बजारको डेटा आउँछ।\n"
-        "अन्य Symbol टाइप गरेमा शेयर विवरण आउँछ।"
+        "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
 
 # Default handler for stock symbol
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text.strip().upper()
+    chat_id = update.effective_chat.id
+    log_user(chat_id)
 
-    if symbol == "NEPSE":
-        response = fetch_nepse_alpha_data()
+    symbol = update.message.text.strip().upper()
+    data = fetch_stock_data(symbol)
+
+    if data:
+        response = (
+            f"Stock Data for <b>{symbol}</b>:\n\n"
+            f"LTP: {data['LTP']}\n"
+            f"Change Percent: {data['Change Percent']}\n"
+            f"Previous Close: {data['Previous Close']}\n"
+            f"Day High: {data['Day High']}\n"
+            f"Day Low: {data['Day Low']}\n"
+            f"52 Week High: {data['52 Week High']}\n"
+            f"52 Week Low: {data['52 Week Low']}\n"
+            f"Volume: {data['Volume']}\n"
+            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
+            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
+            "Thank you for using my bot. Please share it with your friends and groups."
+        )
     else:
-        data = fetch_stock_data(symbol)
-        if data:
-            response = (
-                f"Stock Data for <b>{symbol}</b>:\n\n"
-                f"LTP: {data['LTP']}\n"
-                f"Change Percent: {data['Change Percent']}\n"
-                f"Previous Close: {data['Previous Close']}\n"
-                f"Day High: {data['Day High']}\n"
-                f"Day Low: {data['Day Low']}\n"
-                f"52 Week High: {data['52 Week High']}\n"
-                f"52 Week Low: {data['52 Week Low']}\n"
-                f"Volume: {data['Volume']}\n"
-                f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
-                f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
-                "Thank you for using NEPSE BOT."
-            )
-        else:
-            response = f"⚠️ Symbol '{symbol}' फेला परेन। कृपया सही Symbol टाइप गर्नुहोस्।"
+        response = f"""Symbol '{symbol}' 
+        ल्या, फेला परेन त 🤗🤗।
+        Symbol राम्रो सङ्ग फेरि हान्नुस है।
+        कि कारोबार भएको छैन? 🤗। """
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+
+# Total users command handler
+async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    with open(DATA_FILE, "r") as file:
+        users = json.load(file)
+    await update.message.reply_text(f"Total unique users: {len(users)}")
 
 # Main function
 if __name__ == "__main__":
@@ -197,6 +181,7 @@ if __name__ == "__main__":
 
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("total_users", total_users))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
 
     # Start polling
@@ -204,5 +189,5 @@ if __name__ == "__main__":
     application.run_polling()
 
     # Running Flask app to handle web traffic
-    port = int(os.getenv("PORT", 8080))
+    port = int(os.getenv("PORT", 8080))  # Render's default port
     app.run(host="0.0.0.0", port=port)
