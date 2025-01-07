@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import smtplib
 import schedule
 import time
@@ -43,7 +42,7 @@ def log_user(chat_id, username):
         with open(DATA_FILE, "w") as file:
             json.dump(users, file)
         # Notify bot owner about the new user
-        asyncio.run(notify_owner(chat_id, username))
+        asyncio.create_task(notify_owner(chat_id, username))
 
 
 # Notify the bot owner about a new user
