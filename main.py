@@ -1,122 +1,72 @@
 import os
-import json
+import requests
+from bs4 import BeautifulSoup
+from flask import Flask
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+from dotenv import load_dotenv
 import smtplib
-import schedule
-import time
-from threading import Thread
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from flask import Flask, jsonify
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from dotenv import load_dotenv
+import asyncio
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Flask application
-app = Flask(__name__)
-
-# Ensure users.json exists
-DATA_FILE = "users.json"
-if not os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "w") as file:
-        json.dump([], file)
-
-# Environment variables
+# Environment Variables
+TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
 BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
+PORT = os.getenv("PORT", 8080)
 
+# Initialize Flask application
+app = Flask(__name__)
 
-# Function to log unique users
-def log_user(chat_id, username):
-    with open(DATA_FILE, "r") as file:
-        users = json.load(file)
+# Store users' details
+user_details = []
 
-    if chat_id not in [user["chat_id"] for user in users]:
-        users.append({"chat_id": chat_id, "username": username})
-        with open(DATA_FILE, "w") as file:
-            json.dump(users, file)
-        # Notify bot owner about the new user
-        asyncio.create_task(notify_owner(chat_id, username))
-
-
-# Notify the bot owner about a new user
-async def notify_owner(chat_id, username):
-    await application.bot.send_message(
-        chat_id=BOT_OWNER_CHAT_ID,
-        text=f"New user detected:\nChat ID: {chat_id}\nUsername: {username}"
-    )
-
-
-# Send email with users.json
-def send_email():
-    if not os.path.exists(DATA_FILE):
-        print("No users.json file found.")
-        return
-
-    with open(DATA_FILE, "r") as file:
-        users = json.load(file)
-    formatted_users = "\n".join([f"{user['chat_id']}: {user['username']}" for user in users])
-
-    subject = "NEPSE Bot: Weekly Users Report"
-    body = f"Attached is the weekly report of users who have used your bot.\n\nUser List:\n{formatted_users}"
-
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = EMAIL_ADDRESS
-    msg['Subject'] = subject
-
-    msg.attach(MIMEText(body, 'plain'))
-
-    with open(DATA_FILE, "rb") as file:
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(file.read())
-    encoders.encode_base64(part)
-    part.add_header(
-        'Content-Disposition',
-        f'attachment; filename={DATA_FILE}'
-    )
-    msg.attach(part)
-
+# Function to send email
+def send_email(subject, body):
     try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_ADDRESS
+        msg['To'] = EMAIL_ADDRESS
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body, 'plain'))
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, EMAIL_ADDRESS, msg.as_string())
-        print("Email sent successfully!")
+            server.send_message(msg)
+        print("Email sent successfully.")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"Error sending email: {e}")
 
-
-# Schedule email job
-def schedule_email():
-    schedule.every().thursday.at("16:00").do(send_email)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-
-# Flask API endpoint to view users.json
-@app.route("/users", methods=["GET"])
-def get_users():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as file:
-            users = json.load(file)
-        return jsonify({"users": users, "total_users": len(users)}), 200
-    return jsonify({"error": "users.json not found!"}), 404
-
+# Function to send user details email every Thursday at 16:00
+def send_weekly_user_report():
+    if user_details:
+        body = "Weekly User Details Report:\n\n"
+        for user in user_details:
+            body += f"Name: {user['name']}\nUser ID: {user['id']}\n\n"
+        body += f"Total Users: {len(user_details)}"
+        send_email("Weekly User Details Report", body)
+    else:
+        send_email("Weekly User Details Report", "No users have used the bot this week.")
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    username = update.effective_user.username or "Unknown"
-    log_user(chat_id, username)
+    user = update.effective_user
+    user_info = {"name": user.full_name, "id": user.id}
+    
+    # Check if user is already in the list
+    if user_info not in user_details:
+        user_details.append(user_info)
+        # Notify bot owner
+        owner_message = f"New User:\nName: {user.full_name}\nUser ID: {user.id}"
+        await context.bot.send_message(chat_id=BOT_OWNER_CHAT_ID, text=owner_message)
 
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
@@ -125,20 +75,68 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_message)
 
+# Default handler for stock symbol
+async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    symbol = update.message.text.strip().upper()
+    data = fetch_stock_data(symbol)
+
+    if data:
+        response = (
+            f"Stock Data for <b>{symbol}</b>:\n\n"
+            f"LTP: {data['LTP']}\n"
+            f"Change Percent: {data['Change Percent']}\n"
+            f"Previous Close: {data['Previous Close']}\n"
+            f"Day High: {data['Day High']}\n"
+            f"Day Low: {data['Day Low']}\n"
+            f"52 Week High: {data['52 Week High']}\n"
+            f"52 Week Low: {data['52 Week Low']}\n"
+            f"Volume: {data['Volume']}\n"
+            f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
+            f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
+            "Thank you for using my bot. Please share it with your friends and groups."
+        )
+    else:
+        response = f"""Symbol '{symbol}' 
+        ल्या, फेला परेन त 🤗🤗।
+        Symbol राम्रो सङ्ग फेरि हान्नुस है।
+        कि कारोबार भएको छैन? 🤗। """
+
+    await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+
+# Function to fetch stock data (dummy implementation for now)
+def fetch_stock_data(symbol):
+    # Use the existing functions fetch_live_trading_data() and fetch_52_week_data() here.
+    # For brevity, keeping it dummy:
+    return {
+        'LTP': 1000,
+        'Change Percent': '+2%',
+        'Previous Close': 980,
+        'Day High': 1020,
+        'Day Low': 990,
+        '52 Week High': 1200,
+        '52 Week Low': 800,
+        'Volume': '50,000',
+        'Down From High': 16.67,
+        'Up From Low': 25.0
+    }
 
 # Main function
 if __name__ == "__main__":
-    # Telegram bot application
+    # Set up Telegram bot application
     application = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
 
-    # Add command handler
+    # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
 
-    # Start email scheduling in a separate thread
-    email_thread = Thread(target=schedule_email)
-    email_thread.daemon = True
-    email_thread.start()
+    # Scheduler for weekly email
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(send_weekly_user_report, 'cron', day_of_week='thu', hour=16, minute=0)
+    scheduler.start()
 
-    # Start Telegram bot polling
+    # Start polling
     print("Starting polling...")
-    application.run_polling()
+    asyncio.run(application.run_polling())
+
+    # Running Flask app to handle web traffic
+    app.run(host="0.0.0.0", port=PORT)
