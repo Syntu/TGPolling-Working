@@ -1,6 +1,6 @@
 import os
+import json
 import requests
-from bs4 import BeautifulSoup
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import asyncio
 from apscheduler.schedulers.background import BackgroundScheduler
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -25,36 +25,49 @@ PORT = os.getenv("PORT", 8080)
 # Initialize Flask application
 app = Flask(__name__)
 
-# Store users' details
-user_details = []
-
-# Function to send email
-def send_email(subject, body):
+# Load user details from file
+def load_user_details():
     try:
+        with open("user_details.json", "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return []
+
+# Save user details to file
+def save_user_details():
+    with open("user_details.json", "w") as file:
+        json.dump(user_details, file, indent=4)
+
+# Send user details via email
+def send_user_details_email():
+    try:
+        if not user_details:
+            print("No user details to send via email.")
+            return
+        
+        # Prepare user details for email
+        user_list = "\n".join([f"{i+1}. {user['name']} (ID: {user['id']})" for i, user in enumerate(user_details)])
+        email_body = f"Total Users: {len(user_details)}\n\nUser Details:\n{user_list}"
+
+        # Create email
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = EMAIL_ADDRESS
-        msg['Subject'] = subject
+        msg['Subject'] = "Weekly User Details"
 
-        msg.attach(MIMEText(body, 'plain'))
+        msg.attach(MIMEText(email_body, 'plain'))
+
+        # Send email
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg)
-        print("Email sent successfully.")
+        print("User details email sent successfully.")
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print(f"Error sending user details email: {e}")
 
-# Function to send user details email every Thursday at 16:00
-def send_weekly_user_report():
-    if user_details:
-        body = "Weekly User Details Report:\n\n"
-        for user in user_details:
-            body += f"Name: {user['name']}\nUser ID: {user['id']}\n\n"
-        body += f"Total Users: {len(user_details)}"
-        send_email("Weekly User Details Report", body)
-    else:
-        send_email("Weekly User Details Report", "No users have used the bot this week.")
+# Initialize user details
+user_details = load_user_details()
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,7 +77,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if user is already in the list
     if user_info not in user_details:
         user_details.append(user_info)
-        # Notify bot owner
+        save_user_details()  # Save the updated list to file
+
+        # Notify bot owner about new user
         owner_message = f"New User:\nName: {user.full_name}\nUser ID: {user.id}"
         await context.bot.send_message(chat_id=BOT_OWNER_CHAT_ID, text=owner_message)
 
@@ -103,10 +118,21 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
+# Handler to check total users
+async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_chat.id) == BOT_OWNER_CHAT_ID:  # Check if the user is the bot owner
+        if user_details:
+            total = len(user_details)
+            user_list = "\n".join([f"{i+1}. {user['name']} (ID: {user['id']})" for i, user in enumerate(user_details)])
+            response = f"Total Users: {total}\n\nUser Details:\n{user_list}"
+        else:
+            response = "No users have used the bot yet."
+    else:
+        response = "You are not authorized to view this information."
+    await update.message.reply_text(response)
+
 # Function to fetch stock data (dummy implementation for now)
 def fetch_stock_data(symbol):
-    # Use the existing functions fetch_live_trading_data() and fetch_52_week_data() here.
-    # For brevity, keeping it dummy:
     return {
         'LTP': 1000,
         'Change Percent': '+2%',
@@ -128,10 +154,11 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
+    application.add_handler(CommandHandler("users", total_users))
 
     # Scheduler for weekly email
     scheduler = BackgroundScheduler()
-    scheduler.add_job(send_weekly_user_report, 'cron', day_of_week='thu', hour=16, minute=0)
+    scheduler.add_job(send_user_details_email, 'cron', day_of_week='thu', hour=16, minute=0)
     scheduler.start()
 
     # Start polling
