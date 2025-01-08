@@ -1,88 +1,122 @@
 import os
-import json
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from apscheduler.schedulers.background import BackgroundScheduler
-import asyncio
 
 # Load environment variables
 load_dotenv()
 
-# Environment Variables
-TELEGRAM_API_KEY = os.getenv("TELEGRAM_API_KEY")
-BOT_OWNER_CHAT_ID = os.getenv("BOT_OWNER_CHAT_ID")
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-PORT = os.getenv("PORT", 8080)
-
 # Initialize Flask application
 app = Flask(__name__)
 
-# Load user details from file
-def load_user_details():
-    try:
-        with open("user_details.json", "r") as file:
-            return json.load(file)
-    except FileNotFoundError:
-        return []
+# Function to fetch live trading data
+def fetch_live_trading_data(symbol):
+    url = "https://www.sharesansar.com/live-trading"
+    response = requests.get(url)
 
-# Save user details to file
-def save_user_details():
-    with open("user_details.json", "w") as file:
-        json.dump(user_details, file, indent=4)
+    if response.status_code != 200:
+        print("Error: Unable to fetch live trading data. Status code:", response.status_code)
+        return None
 
-# Send user details via email
-def send_user_details_email():
-    try:
-        if not user_details:
-            print("No user details to send via email.")
-            return
-        
-        # Prepare user details for email
-        user_list = "\n".join([f"{i+1}. {user['name']} (ID: {user['id']})" for i, user in enumerate(user_details)])
-        email_body = f"Total Users: {len(user_details)}\n\nUser Details:\n{user_list}"
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table')
+    if not table:
+        print("Error: No table found in live trading data.")
+        return None
 
-        # Create email
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_ADDRESS
-        msg['To'] = EMAIL_ADDRESS
-        msg['Subject'] = "Weekly User Details"
+    rows = table.find_all('tr')[1:]
+    for row in rows:
+        cols = row.find_all('td')
+        row_symbol = cols[1].text.strip()
 
-        msg.attach(MIMEText(email_body, 'plain'))
+        if row_symbol.upper() == symbol.upper():
+            try:
+                ltp = float(cols[2].text.strip().replace(',', ''))
+                change_percent = cols[4].text.strip()
+                day_high = float(cols[6].text.strip().replace(',', ''))
+                day_low = float(cols[7].text.strip().replace(',', ''))
+                volume = cols[8].text.strip()
+                previous_close = float(cols[9].text.strip().replace(',', ''))
+                return {
+                    'LTP': ltp,
+                    'Change Percent': change_percent,
+                    'Day High': day_high,
+                    'Day Low': day_low,
+                    'Volume': volume,
+                    'Previous Close': previous_close
+                }
+            except (ValueError, IndexError) as e:
+                print(f"Error processing live trading data for symbol {symbol}: {e}")
+                return None
+    return None
 
-        # Send email
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
-        print("User details email sent successfully.")
-    except Exception as e:
-        print(f"Error sending user details email: {e}")
+# Function to fetch 52-week data
+def fetch_52_week_data(symbol):
+    url = "https://www.sharesansar.com/today-share-price"
+    response = requests.get(url)
 
-# Initialize user details
-user_details = load_user_details()
+    if response.status_code != 200:
+        print("Error: Unable to fetch 52-week data. Status code:", response.status_code)
+        return None
 
-# Start command handler
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table')
+    if not table:
+        print("Error: No table found in 52-week data.")
+        return None
+
+    rows = table.find_all('tr')[1:]
+    for row in rows:
+        cols = row.find_all('td')
+        row_symbol = cols[1].text.strip()
+
+        if row_symbol.upper() == symbol.upper():
+            try:
+                week_52_high = float(cols[19].text.strip().replace(',', ''))
+                week_52_low = float(cols[20].text.strip().replace(',', ''))
+                return {
+                    '52 Week High': week_52_high,
+                    '52 Week Low': week_52_low
+                }
+            except (ValueError, IndexError) as e:
+                print(f"Error processing 52-week data for symbol {symbol}: {e}")
+                return None
+    return None
+
+# Function to fetch complete stock data
+def fetch_stock_data(symbol):
+    live_data = fetch_live_trading_data(symbol)
+    week_data = fetch_52_week_data(symbol)
+
+    if live_data and week_data:
+        ltp = live_data['LTP']
+        week_52_high = week_data['52 Week High']
+        week_52_low = week_data['52 Week Low']
+
+        # Calculate down from high and up from low
+        down_from_high = round(((week_52_high - ltp) / week_52_high) * 100, 2)
+        up_from_low = round(((ltp - week_52_low) / week_52_low) * 100, 2)
+
+        live_data.update(week_data)
+        live_data.update({
+            'Down From High': down_from_high,
+            'Up From Low': up_from_low
+        })
+        return live_data
+    return None
+
+# Track new users
+users = []
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_info = {"name": user.full_name, "id": user.id}
-    
-    # Check if user is already in the list
-    if user_info not in user_details:
-        user_details.append(user_info)
-        save_user_details()  # Save the updated list to file
-
-        # Notify bot owner about new user
-        owner_message = f"New User:\nName: {user.full_name}\nUser ID: {user.id}"
-        await context.bot.send_message(chat_id=BOT_OWNER_CHAT_ID, text=owner_message)
-
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
@@ -90,7 +124,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_message)
 
-# Default handler for stock symbol
+    # Add new user to the list
+    user_id = update.message.chat.id
+    if user_id not in users:
+        users.append(user_id)
+        print(f"New user added: {user_id}")
+
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.strip().upper()
     data = fetch_stock_data(symbol)
@@ -118,52 +157,63 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
-# Handler to check total users
-async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) == BOT_OWNER_CHAT_ID:  # Check if the user is the bot owner
-        if user_details:
-            total = len(user_details)
-            user_list = "\n".join([f"{i+1}. {user['name']} (ID: {user['id']})" for i, user in enumerate(user_details)])
-            response = f"Total Users: {total}\n\nUser Details:\n{user_list}"
-        else:
-            response = "No users have used the bot yet."
+# Command to view active users
+async def get_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if users:
+        user_list = "\n".join([str(user) for user in users])
+        response = f"Active users:\n{user_list}"
     else:
-        response = "You are not authorized to view this information."
+        response = "No active users found."
     await update.message.reply_text(response)
 
-# Function to fetch stock data (dummy implementation for now)
-def fetch_stock_data(symbol):
-    return {
-        'LTP': 1000,
-        'Change Percent': '+2%',
-        'Previous Close': 980,
-        'Day High': 1020,
-        'Day Low': 990,
-        '52 Week High': 1200,
-        '52 Week Low': 800,
-        'Volume': '50,000',
-        'Down From High': 16.67,
-        'Up From Low': 25.0
-    }
+# Send email with user details every Thursday at 1600
+def send_email(user_details):
+    sender_email = os.getenv("EMAIL_ADDRESS")
+    receiver_email = os.getenv("EMAIL_ADDRESS")
+    password = os.getenv("EMAIL_PASSWORD")
+
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = receiver_email
+    message["Subject"] = "User Details Report"
+
+    body = "Here are the user details:\n\n"
+    for user in user_details:
+        body += f"{user}\n"
+    message.attach(MIMEText(body, "plain"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(sender_email, password)
+        server.sendmail(sender_email, receiver_email, message.as_string())
+
+# Scheduler to send email every Thursday at 1600
+scheduler = BackgroundScheduler()
+
+def schedule_email():
+    scheduler.add_job(
+        lambda: send_email(users), 'cron', day_of_week='thu', hour=16, minute=0
+    )
+    scheduler.start()
 
 # Main function
 if __name__ == "__main__":
+    TOKEN = os.getenv("TELEGRAM_API_KEY")
+
     # Set up Telegram bot application
-    application = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
+    application = ApplicationBuilder().token(TOKEN).build()
 
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
-    application.add_handler(CommandHandler("users", total_users))
-
-    # Scheduler for weekly email
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(send_user_details_email, 'cron', day_of_week='thu', hour=16, minute=0)
-    scheduler.start()
+    application.add_handler(CommandHandler("get_users", get_users))  # New command to get users
 
     # Start polling
     print("Starting polling...")
-    asyncio.run(application.run_polling())
+    application.run_polling()
+
+    # Schedule weekly email
+    schedule_email()
 
     # Running Flask app to handle web traffic
-    app.run(host="0.0.0.0", port=PORT)
+    port = int(os.getenv("PORT", 8080))  # Render's default port
+    app.run(host="0.0.0.0", port=port)
