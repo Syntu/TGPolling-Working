@@ -3,4 +3,4 @@ beautifulsoup4
 python-telegram-bot
 flask
 python-dotenv
-schedule
+apscheduler
