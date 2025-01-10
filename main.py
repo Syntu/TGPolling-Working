@@ -111,6 +111,18 @@ def fetch_stock_data(symbol):
 
 # Function to start the bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    full_name = update.message.from_user.full_name
+    username = update.message.from_user.username
+
+    # Send user details to bot owner
+    owner_id = os.getenv("OWNER_ID")
+    if owner_id:
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=f"New user:\nFull Name: {full_name}\nUsername: {username}\nUser ID: {user_id}"
+        )
+
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
@@ -155,6 +167,15 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
+# Function to send all users' details to bot owner
+async def send_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != int(os.getenv("OWNER_ID")):
+        await update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    # No need to store user data in memory; it's handled automatically on each new user
+    await update.message.reply_text("User details are sent to you immediately when they start using the bot.")
+
 # Main function
 if __name__ == "__main__":
     TOKEN = os.getenv("TELEGRAM_API_KEY")
@@ -165,6 +186,7 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
+    application.add_handler(CommandHandler("users", send_users))
 
     # Start polling
     print("Starting polling...")
