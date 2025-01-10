@@ -1,78 +1,42 @@
-import logging
+import os
 import requests
 from bs4 import BeautifulSoup
+from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
-import os
-import time
+from apscheduler.schedulers.background import BackgroundScheduler
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
-logger = logging.getLogger()
+# Initialize Flask application
+app = Flask(__name__)
 
-# Function to fetch live trading data with enhanced error handling
-def fetch_live_trading_data(symbol):
-    url = "https://www.sharesansar.com/live-trading"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()  # raises exception when not a 2xx response
-    except requests.RequestException as e:
-        logger.error(f"Request failed: {e}")
-        return None
+# Track new users
+users = {}
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    if not table:
-        logger.error("No table found in live trading data.")
-        return None
+# Load users from a file
+def load_users_from_file():
+    if os.path.exists("users.txt"):
+        with open("users.txt", "r") as file:
+            for line in file:
+                user_id, username = line.strip().split(",")
+                users[int(user_id)] = username
 
-    rows = table.find_all('tr')[1:]
-    for row in rows:
-        cols = row.find_all('td')
-        row_symbol = cols[1].text.strip()
+# Save users to a file
+def save_users_to_file():
+    with open("users.txt", "w") as file:
+        for user_id, username in users.items():
+            file.write(f"{user_id},{username}\n")
 
-        if row_symbol.upper() == symbol.upper():
-            try:
-                ltp = float(cols[2].text.strip().replace(',', ''))
-                change_percent = cols[4].text.strip()
-                day_high = float(cols[6].text.strip().replace(',', ''))
-                day_low = float(cols[7].text.strip().replace(',', ''))
-                volume = cols[8].text.strip()
-                previous_close = float(cols[9].text.strip().replace(',', ''))
-                return {
-                    'LTP': ltp,
-                    'Change Percent': change_percent,
-                    'Day High': day_high,
-                    'Day Low': day_low,
-                    'Volume': volume,
-                    'Previous Close': previous_close
-                }
-            except (ValueError, IndexError) as e:
-                logger.error(f"Error processing live trading data for symbol {symbol}: {e}")
-                return None
-    return None
+# Load users at startup
+load_users_from_file()
 
-# Use caching to store previously fetched data for a short time
-stock_cache = {}
-
-def fetch_stock_data(symbol):
-    if symbol in stock_cache and time.time() - stock_cache[symbol]['timestamp'] < 60 * 5:
-        # Cache is valid for 5 minutes
-        logger.info(f"Fetching cached data for {symbol}")
-        return stock_cache[symbol]['data']
-    
-    live_data = fetch_live_trading_data(symbol)
-    if live_data:
-        stock_cache[symbol] = {'data': live_data, 'timestamp': time.time()}
-    return live_data
-
-# Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
@@ -81,7 +45,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_message)
 
-# Default handler for stock symbol
+    # Add new user to the list
+    user_id = update.message.chat.id
+    username = update.message.chat.username or "No Username"
+    
+    if user_id not in users:
+        users[user_id] = username
+        save_users_to_file()  # Save the updated user list to file
+        print(f"New user added: {user_id} - {username}")
+        
+        # Send a message to the owner when a new user joins
+        owner_id = os.getenv("OWNER_TELEGRAM_ID")
+        owner_message = f"New user joined: \nUser ID: {user_id}\nUsername: {username}"
+        await context.bot.send_message(chat_id=owner_id, text=owner_message)
+
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.strip().upper()
     data = fetch_stock_data(symbol)
@@ -109,6 +86,50 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
+async def send_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    owner_id = os.getenv("OWNER_TELEGRAM_ID")
+    if str(update.message.chat.id) != owner_id:
+        await update.message.reply_text("Sorry, you are not authorized to use this command.")
+        return
+
+    if users:
+        user_details = "\n".join([f"ID: {user_id}, Username: {username}" for user_id, username in users.items()])
+        total_users = len(users)
+
+        response = f"Total Users: {total_users}\n\nUser Details:\n{user_details}"
+        await context.bot.send_message(chat_id=owner_id, text=response)
+    else:
+        await update.message.reply_text("No users found.")
+
+# Send email with user details
+def send_email_with_users():
+    sender_email = os.getenv("EMAIL_ADDRESS")
+    receiver_email = os.getenv("OWNER_EMAIL")  # Owner's email
+    password = os.getenv("EMAIL_PASSWORD")
+
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = receiver_email
+    message["Subject"] = "Telegram Bot User Details"
+
+    body = f"Total Users: {len(users)}\n\n"
+    for user_id, username in users.items():
+        body += f"ID: {user_id}, Username: {username}\n"
+    message.attach(MIMEText(body, "plain"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(sender_email, password)
+        server.sendmail(sender_email, receiver_email, message.as_string())
+
+# Scheduler to send email every Thursday
+scheduler = BackgroundScheduler()
+
+def schedule_user_email():
+    scheduler.add_job(
+        send_email_with_users, 'cron', day_of_week='thu', hour=16, minute=0
+    )
+    scheduler.start()
+
 # Main function
 if __name__ == "__main__":
     TOKEN = os.getenv("TELEGRAM_API_KEY")
@@ -119,7 +140,15 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
+    application.add_handler(CommandHandler("user", send_user_details))
 
     # Start polling
-    logger.info("Starting polling...")
+    print("Starting polling...")
     application.run_polling()
+
+    # Schedule email
+    schedule_user_email()
+
+    # Running Flask app to handle web traffic
+    port = int(os.getenv("PORT", 8080))  # Render's default port
+    app.run(host="0.0.0.0", port=port)
