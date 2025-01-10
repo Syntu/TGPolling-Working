@@ -17,9 +17,6 @@ load_dotenv()
 # Initialize Flask application
 app = Flask(__name__)
 
-# Track new users with their full name and ID
-users = {}
-
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
     url = "https://www.sharesansar.com/live-trading"
@@ -116,6 +113,10 @@ def fetch_stock_data(symbol):
         return live_data
     return None
 
+# Track new users and their details
+users = {}
+bot_owner_id = os.getenv("BOT_OWNER_ID")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
@@ -126,14 +127,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Add new user to the list
     user_id = update.message.chat.id
-    full_name = update.message.from_user.full_name
+    full_name = update.message.chat.full_name
+
     if user_id not in users:
         users[user_id] = full_name
-        print(f"New user added: {user_id}, {full_name}")
-
-    # Send message to new user
-    welcome_msg = f"नमस्ते {full_name} 🙏! तपाईंलाई बोटमा स्वागत छ। तपाईं अब कुनै पनि सेयरको डाटा माग्न सक्नुहुन्छ।"
-    await update.message.reply_text(welcome_msg)
+        print(f"New user added: {user_id}, Name: {full_name}")
+        # Notify bot owner about new user
+        if bot_owner_id:
+            await context.bot.send_message(bot_owner_id, f"New user added: {user_id}, Name: {full_name}")
 
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.strip().upper()
@@ -162,16 +163,30 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
-# Command to view active users and their details
+# Command to view all users and their details
 async def get_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if users:
-        user_list = "\n".join([f"{name} (ID: {user_id})" for user_id, name in users.items()])
-        response = f"Active users:\n{user_list}\n\nTotal users: {len(users)}"
+        user_list = "\n".join([f"ID: {user_id}, Name: {name}" for user_id, name in users.items()])
+        response = f"Active users:\n{user_list}"
     else:
         response = "No active users found."
     await update.message.reply_text(response)
 
-# Send email with user details every Thursday at 1600
+# Command to get total number of users
+async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    response = f"Total number of users: {len(users)}"
+    await update.message.reply_text(response)
+
+# Command to send total number of users to the bot owner
+async def users_for_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.chat.id) == bot_owner_id:
+        total_user_count = len(users)
+        response = f"Total number of users: {total_user_count}"
+        await update.message.reply_text(response)
+    else:
+        await update.message.reply_text("Only the bot owner can view this information.")
+
+# Scheduler to send email every Thursday at 1600
 def send_email(user_details):
     sender_email = os.getenv("EMAIL_ADDRESS")
     receiver_email = os.getenv("EMAIL_ADDRESS")
@@ -196,7 +211,7 @@ scheduler = BackgroundScheduler()
 
 def schedule_email():
     scheduler.add_job(
-        lambda: send_email(list(users.values())), 'cron', day_of_week='thu', hour=16, minute=0
+        lambda: send_email(users), 'cron', day_of_week='thu', hour=16, minute=0
     )
     scheduler.start()
 
@@ -210,7 +225,9 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
-    application.add_handler(CommandHandler("get_users", get_users))  # New command to get users
+    application.add_handler(CommandHandler("get_users", get_users))
+    application.add_handler(CommandHandler("total-users", total_users))
+    application.add_handler(CommandHandler("users", users_for_owner))  # New command for bot owner
 
     # Start polling
     print("Starting polling...")
