@@ -13,6 +13,12 @@ load_dotenv()
 # Initialize Flask application
 app = Flask(__name__)
 
+# Bot owner chat ID
+BOT_OWNER_CHAT_ID = int(os.getenv("OWNER_ID"))
+
+# User tracking
+users = []
+
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
     url = "https://www.sharesansar.com/live-trading"
@@ -109,38 +115,43 @@ def fetch_stock_data(symbol):
         return live_data
     return None
 
-# Function to start the bot
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    full_name = update.message.from_user.full_name
-    username = update.message.from_user.username
+# Notify bot owner about a new user
+async def notify_owner(user_id, full_name, username):
+    message = (
+        f"New User:\n"
+        f"Full Name: {full_name}\n"
+        f"Username: @{username or 'Not set'}\n"
+        f"User ID: {user_id}"
+    )
+    application = ApplicationBuilder().token(os.getenv("TELEGRAM_API_KEY")).build()
+    await application.bot.send_message(chat_id=BOT_OWNER_CHAT_ID, text=message)
 
-    # Send user details to bot owner
-    owner_id = os.getenv("OWNER_ID")
-    if owner_id:
-        await context.bot.send_message(
-            chat_id=owner_id,
-            text=f"New user:\nFull Name: {full_name}\nUsername: {username}\nUser ID: {user_id}"
-        )
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat.id
+    full_name = update.message.chat.full_name
+    username = update.message.chat.username
+
+    # Add user to the list
+    if user_id not in [user['id'] for user in users]:
+        users.append({'id': user_id, 'name': full_name, 'username': username})
+        await notify_owner(user_id, full_name, username)
 
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
-        "उदाहरण: SHINE, SCB, SWBBL, SHPC\n\n"
-        "Group मा '/symbol' र Private मा 'symbol' पठाउनुहोस्।"
+        "उदाहरण: SHINE, SCB, SWBBL, SHPC"
     )
     await update.message.reply_text(welcome_message)
 
-# Function to handle stock symbol requests
+# Handle stock symbol requests
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = update.message.chat.type in ["group", "supergroup"]
 
-    if is_group:
-        if not update.message.text.startswith('/'):
-            return
-        symbol = update.message.text[1:].strip().upper()
-    else:
-        symbol = update.message.text.strip().upper()
+    if is_group and not update.message.text.startswith('/'):
+        return
+
+    symbol = update.message.text.strip().lstrip('/').upper()
 
     if not symbol:
         await update.message.reply_text("Please provide a valid stock symbol.")
@@ -157,24 +168,26 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Day Low: {data['Day Low']}\n"
             f"52 Week High: {data['52 Week High']}\n"
             f"52 Week Low: {data['52 Week Low']}\n"
-            f"Volume: {data['Volume']}\n"
             f"५२ हप्ताको उच्च मुल्यबाट घटेको: {data['Down From High']}%\n"
             f"५२ हप्ताको न्युन मुल्यबाट बढेको: {data['Up From Low']}%\n\n"
-            "Thank you for using my bot. Please share it with your friends and groups."
+            "Thank you for using my bot."
         )
     else:
         response = f"Symbol '{symbol}' फेला परेन। कृपया सही Symbol दिनुहोस्।"
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
-# Function to send all users' details to bot owner
+# Send users' details
 async def send_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != int(os.getenv("OWNER_ID")):
+    if update.message.from_user.id != BOT_OWNER_CHAT_ID:
         await update.message.reply_text("You are not authorized to use this command.")
         return
 
-    # No need to store user data in memory; it's handled automatically on each new user
-    await update.message.reply_text("User details are sent to you immediately when they start using the bot.")
+    user_details = "\n".join(
+        [f"👤 {user['name']} | @{user['username'] or 'Not set'} | 🆔 {user['id']}" for user in users]
+    )
+    response = f"👥 Total Users: {len(users)}\n\n{user_details}"
+    await update.message.reply_text(response)
 
 # Main function
 if __name__ == "__main__":
@@ -183,15 +196,10 @@ if __name__ == "__main__":
     # Set up Telegram bot application
     application = ApplicationBuilder().token(TOKEN).build()
 
-    # Add handlers to the application
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
     application.add_handler(CommandHandler("users", send_users))
 
     # Start polling
-    print("Starting polling...")
     application.run_polling()
-
-    # Running Flask app to handle web traffic
-    port = int(os.getenv("PORT", 8080))  # Render's default port
-    app.run(host="0.0.0.0", port=port)
