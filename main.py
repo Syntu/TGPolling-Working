@@ -6,10 +6,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # Load environment variables
 load_dotenv()
@@ -113,33 +109,32 @@ def fetch_stock_data(symbol):
         return live_data
     return None
 
-# Track new users and store user data (ID and name)
-users = []
-
+# Function to start the bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
         "Welcome 🙏 to Syntoo's NEPSE BOT💗\n"
         "के को डाटा चाहियो? Symbol दिनुस।\n"
-        "उदाहरण: SHINE, SCB, SWBBL, SHPC"
+        "उदाहरण: SHINE, SCB, SWBBL, SHPC\n\n"
+        "Group मा '/symbol' र Private मा 'symbol' पठाउनुहोस्।"
     )
     await update.message.reply_text(welcome_message)
 
-    # Add new user to the list
-    user_id = update.message.chat.id
-    full_name = update.message.chat.full_name
-    if user_id not in users:
-        users.append({'id': user_id, 'name': full_name})
-        print(f"New user added: {user_id}")
-
-        # Notify bot owner about the new user
-        owner_chat_id = os.getenv("OWNER_CHAT_ID")
-        if owner_chat_id:
-            await context.bot.send_message(owner_chat_id, f"New user added:\nID: {user_id}\nName: {full_name}")
-
+# Function to handle stock symbol requests
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text.strip().upper()
-    data = fetch_stock_data(symbol)
+    is_group = update.message.chat.type in ["group", "supergroup"]
 
+    if is_group:
+        if not update.message.text.startswith('/'):
+            return
+        symbol = update.message.text[1:].strip().upper()
+    else:
+        symbol = update.message.text.strip().upper()
+
+    if not symbol:
+        await update.message.reply_text("Please provide a valid stock symbol.")
+        return
+
+    data = fetch_stock_data(symbol)
     if data:
         response = (
             f"Stock Data for <b>{symbol}</b>:\n\n"
@@ -156,50 +151,9 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Thank you for using my bot. Please share it with your friends and groups."
         )
     else:
-        response = f"""Symbol '{symbol}' 
-        ल्या, फेला परेन त 🤗🤗।
-        Symbol राम्रो सङ्ग फेरि हान्नुस है।
-        कि कारोबार भएको छैन? 🤗। """
+        response = f"Symbol '{symbol}' फेला परेन। कृपया सही Symbol दिनुहोस्।"
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
-
-# Command to view active users
-async def get_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    active_users = "\n".join([f"ID: {user['id']}, Name: {user['name']}" for user in users])
-    if active_users:
-        response = f"Active users:\n{active_users}"
-    else:
-        response = "No active users found."
-    await update.message.reply_text(response)
-
-# Scheduler to send email every Thursday at 1600
-def send_email(user_details):
-    sender_email = os.getenv("EMAIL_ADDRESS")
-    receiver_email = os.getenv("EMAIL_ADDRESS")
-    password = os.getenv("EMAIL_PASSWORD")
-
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = receiver_email
-    message["Subject"] = "User Details Report"
-
-    body = "Here are the user details:\n\n"
-    for user in user_details:
-        body += f"{user['id']}: {user['name']}\n"
-    message.attach(MIMEText(body, "plain"))
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender_email, password)
-        server.sendmail(sender_email, receiver_email, message.as_string())
-
-# Scheduler to send email every Thursday at 1600
-scheduler = BackgroundScheduler()
-
-def schedule_email():
-    scheduler.add_job(
-        lambda: send_email(users), 'cron', day_of_week='thu', hour=16, minute=0
-    )
-    scheduler.start()
 
 # Main function
 if __name__ == "__main__":
@@ -211,14 +165,10 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
-    application.add_handler(CommandHandler("get_users", get_users))  # New command to get active users
 
     # Start polling
     print("Starting polling...")
     application.run_polling()
-
-    # Schedule weekly email
-    schedule_email()
 
     # Running Flask app to handle web traffic
     port = int(os.getenv("PORT", 8080))  # Render's default port
