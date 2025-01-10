@@ -113,9 +113,8 @@ def fetch_stock_data(symbol):
         return live_data
     return None
 
-# Track new users and their details
-users = {}
-bot_owner_id = os.getenv("BOT_OWNER_ID")
+# Track new users and store user data (ID and name)
+users = []
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
@@ -128,13 +127,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Add new user to the list
     user_id = update.message.chat.id
     full_name = update.message.chat.full_name
-
     if user_id not in users:
-        users[user_id] = full_name
-        print(f"New user added: {user_id}, Name: {full_name}")
-        # Notify bot owner about new user
-        if bot_owner_id:
-            await context.bot.send_message(bot_owner_id, f"New user added: {user_id}, Name: {full_name}")
+        users.append({'id': user_id, 'name': full_name})
+        print(f"New user added: {user_id}")
+
+        # Notify bot owner about the new user
+        owner_chat_id = os.getenv("OWNER_CHAT_ID")
+        if owner_chat_id:
+            await context.bot.send_message(owner_chat_id, f"New user added:\nID: {user_id}\nName: {full_name}")
 
 async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = update.message.text.strip().upper()
@@ -163,28 +163,14 @@ async def handle_stock_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
-# Command to view all users and their details
+# Command to view active users
 async def get_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if users:
-        user_list = "\n".join([f"ID: {user_id}, Name: {name}" for user_id, name in users.items()])
-        response = f"Active users:\n{user_list}"
+    active_users = "\n".join([f"ID: {user['id']}, Name: {user['name']}" for user in users])
+    if active_users:
+        response = f"Active users:\n{active_users}"
     else:
         response = "No active users found."
     await update.message.reply_text(response)
-
-# Command to get total number of users
-async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    response = f"Total number of users: {len(users)}"
-    await update.message.reply_text(response)
-
-# Command to send total number of users to the bot owner
-async def users_for_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.message.chat.id) == bot_owner_id:
-        total_user_count = len(users)
-        response = f"Total number of users: {total_user_count}"
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("Only the bot owner can view this information.")
 
 # Scheduler to send email every Thursday at 1600
 def send_email(user_details):
@@ -199,7 +185,7 @@ def send_email(user_details):
 
     body = "Here are the user details:\n\n"
     for user in user_details:
-        body += f"{user}\n"
+        body += f"{user['id']}: {user['name']}\n"
     message.attach(MIMEText(body, "plain"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -225,9 +211,7 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
-    application.add_handler(CommandHandler("get_users", get_users))
-    application.add_handler(CommandHandler("total-users", total_users))
-    application.add_handler(CommandHandler("users", users_for_owner))  # New command for bot owner
+    application.add_handler(CommandHandler("get_users", get_users))  # New command to get active users
 
     # Start polling
     print("Starting polling...")
