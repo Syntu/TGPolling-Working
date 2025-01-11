@@ -225,7 +225,7 @@ if __name__ == "__main__":
     # Add handlers to the application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("users", get_all_users))
-    application.add_handler(CommandHandler("get-users", get_active_users))
+    application.add_handler(CommandHandler("get_users", get_active_users))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_symbol))
     application.add_handler(MessageHandler(filters.COMMAND, handle_stock_symbol))
 
