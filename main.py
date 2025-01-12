@@ -17,10 +17,15 @@ app = Flask(__name__)
 users = {}
 active_users = set()
 
+# Headers for requests to avoid being blocked
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+}
+
 # Function to fetch live trading data
 def fetch_live_trading_data(symbol):
     url = "https://www.sharesansar.com/live-trading"
-    response = requests.get(url)
+    response = requests.get(url, headers=HEADERS)
 
     if response.status_code != 200:
         print("Error: Unable to fetch live trading data. Status code:", response.status_code)
@@ -61,7 +66,7 @@ def fetch_live_trading_data(symbol):
 # Function to fetch 52-week data
 def fetch_52_week_data(symbol):
     url = "https://www.sharesansar.com/today-share-price"
-    response = requests.get(url)
+    response = requests.get(url, headers=HEADERS)
 
     if response.status_code != 200:
         print("Error: Unable to fetch 52-week data. Status code:", response.status_code)
